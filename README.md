@@ -1,212 +1,148 @@
-# AR4 ROS Driver
+# HRI AR4 ROS Driver
 
-ROS 2 driver of the AR4 robot arm from [Annin Robotics](https://www.anninrobotics.com).
-Tested with ROS 2 Jazzy on Ubuntu 24.04. Also has branch for Humble
-[here](https://github.com/ycheng517/ar4_ros_driver/tree/humble).
+Human-Robot Interaction 실험을 위한 AR4 로봇 암 ROS 2 드라이버입니다.
+[ycheng517/ar4_ros_driver](https://github.com/ycheng517/ar4_ros_driver)를 기반으로 Unity 통합, EEG 녹화/분석, VR 텔레옵 기능을 추가했습니다.
 
-**Supports:**
+## 주요 기능
 
-- AR4 MK1 (Original version), MK2, MK3
-- AR4 servo gripper
+- **Unity 통합**: ROS-TCP-Endpoint를 통한 Unity-ROS2 실시간 통신
+- **EEG 녹화/분석**: Unicorn EEG 장치 지원, LSL 스트림, OpenViBE 연동
+- **VR 텔레옵**: VR 컨트롤러를 통한 로봇 원격 조작
+- **Pick and Place**: 물체 집기 및 놓기 작업 자동화
+- **MoveIt 제어**: 모션 플래닝 및 RViz 시각화
+- **Gazebo 시뮬레이션**: 가상 환경에서 테스트
 
-**Features:**
+## 패키지 구조
 
-- MoveIt control
-- Gazebo simulation
+| 패키지 | 설명 |
+|--------|------|
+| `annin_ar4_description` | 로봇 암 및 그리퍼 URDF |
+| `annin_ar4_driver` | ros2_control 기반 하드웨어 인터페이스 |
+| `annin_ar4_firmware` | Teensy/Arduino 펌웨어 |
+| `annin_ar4_moveit_config` | MoveIt 설정 및 RViz |
+| `annin_ar4_gazebo` | Gazebo 시뮬레이션 |
+| `ROS-TCP-Endpoint` | Unity-ROS2 TCP 통신 |
 
-## Video Demo
+## HRI 실험 스크립트
 
-<div align="center">
+| 스크립트 | 설명 |
+|----------|------|
+| `hri_experiment_controller.py` | HRI 실험 메인 컨트롤러 |
+| `eeg_recorder.py` | EEG 데이터 녹화 |
+| `eeg_visualizer.py` | EEG 실시간 시각화 |
+| `analyze_edf.py` | EDF 포맷 EEG 분석 |
+| `analyze_xdf.py` | XDF 포맷 EEG 분석 |
+| `lsl_openvibe_bridge.py` | LSL-OpenViBE 브릿지 |
+| `unicorn_lsl_stream.py` | Unicorn EEG LSL 스트림 |
+| `vr_teleop.py` | VR 텔레오퍼레이션 |
+| `pick_and_place.py` | 픽 앤 플레이스 |
+| `unity_pick_place.py` | Unity 연동 픽 앤 플레이스 |
+| `gripper_test.py` | 그리퍼 테스트 |
+| `robot_dance.py` | 로봇 댄스 데모 |
 
-|                                        Moveit Motion Planning                                         |                                   Startup, Calibration, and Gripper Control                                   |
-| :---------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------: |
-| [![AR4 ROS 2 Driver Demo](http://img.youtube.com/vi/XJCrfrW7jXE/0.jpg)](https://youtu.be/XJCrfrW7jXE) | [![Startup, Calibration, Gripper](http://img.youtube.com/vi/PQtXFzqRtHM/0.jpg)](https://youtu.be/PQtXFzqRtHM) |
+## 설치
 
-</div>
+### 요구사항
 
-## Add-on Features and Capabilities
+- Ubuntu 24.04
+- ROS 2 Jazzy
+- Python 3.10+
 
-The following projects showcases additional features and capabilities built on top of this driver:
-
-- [Hand-Eye calibration](https://github.com/ycheng517/ar4_hand_eye_calibration)
-- [Teleoperation using Xbox controller](https://github.com/ycheng517/ar4_ros_driver_examples)
-- [Multi-arm control](https://github.com/ycheng517/ar4_ros_driver_examples)
-- [Voice controlled pick and place](https://github.com/ycheng517/tabletop-handybot)
-
-## Overview
-
-- **annin_ar4_description**
-  - Hardware description of arm & servo gripper urdf.
-- **annin_ar4_driver**
-  - ROS interfaces for the arm and servo gripper drivers, built on the ros2_control framework.
-  - Manages joint offsets, limits and conversion between joint and actuator messages.
-  - Handles communication with the microcontrollers.
-- **annin_ar4_firmware**
-  - Firmware for the Teensy and Arduino Nano microcontrollers.
-- **annin_ar4_moveit_config**
-  - MoveIt module for motion planning.
-  - Controlling the arm and servo gripper through Rviz.
-- **annin_ar4_gazebo**
-  - Simulation on Gazebo.
-
-## Installation
-
-> 💡 It's generally a good idea to first ensure that your robot arm works with the official [AR4 Control Software](https://anninrobotics.com/downloads/), where there's better tools for debugging mechanical and electrical issues. 
-
-- Install [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html) for Ubuntu 24.04
-- Clone this repository:
-  ```bash
-  git clone https://github.com/ycheng517/ar4_ros_driver
-  ```
-- Install workspace dependencies:
-  ```bash
-  rosdep install --from-paths . --ignore-src -r -y
-  ```
-- Build the workspace:
-  ```bash
-  colcon build
-  ```
-- Source the workspace:
-  ```bash
-  source install/setup.bash
-  ```
-- Enable serial port access if you haven't already done so:
-  ```bash
-  sudo addgroup $USER dialout
-  ```
-  You will need to log out and back in for changes to take effect.
-
-### Firmware Flashing
-
-The Teensy and Arduino Nano sketches provided in [annin_ar4_firmware](./annin_ar4_firmware/)
-are compatible with the default hardware. To flash it, follow the same
-procedure as specified in [AR4 Robot Setup](https://www.youtube.com/watch?v=OL6lXu8VU4s).
-An extra step required is to install [Bounce2](https://github.com/thomasfredericks/Bounce2)
-from the Library Manager in Arduino.
-
-### [Optional] Running in Docker Container
-
-A docker container and run script has been provided that can be used to run the
-robot and any GUI programs. It requires [rocker](https://github.com/osrf/rocker) to be installed. Then you can start the docker container with:
+### 설치 방법
 
 ```bash
-docker build -t ar4_ros_driver .
+# 저장소 클론
+git clone https://github.com/HCNLab/HRI-ar4-ros-driver.git
+cd HRI-ar4-ros-driver
 
-# Adjust the volume mounting and devices based on your project and hardware
-rocker --ssh --x11 \
-  --devices /dev/ttyUSB0 /dev/ttyACM0 \
-  --volume $(pwd):/ar4_ws/src/ar4_ros_driver -- \
-  ar4_ros_driver bash
+# 의존성 설치
+rosdep install --from-paths . --ignore-src -r -y
+
+# 빌드
+colcon build
+
+# 환경 설정
+source install/setup.bash
+
+# 시리얼 포트 권한 (최초 1회)
+sudo addgroup $USER dialout
 ```
 
-## Usage
+### 펌웨어 플래싱
 
-There are two modules that you will always need to run:
+[annin_ar4_firmware](./annin_ar4_firmware/)의 Teensy/Arduino 스케치를 업로드합니다.
+[Bounce2](https://github.com/thomasfredericks/Bounce2) 라이브러리가 필요합니다.
 
-1. **Arm module** - this can be for either a real-world or simulated arm
+## 사용법
 
-   - For controlling the real-world arm, you will need to run the `annin_ar4_driver` module
-   - For the simulated arm, you will need to run the `annin_ar4_gazebo` module
-   - Either of the modules will load the necessary hardware descriptions for MoveIt
-
-2. **MoveIt module** - the `annin_ar4_moveit_config` module provides the MoveIt interface and RViz GUI.
-
-The various use cases of the modules and instructions to run them are described below:
-
----
-
-### MoveIt Demo in RViz
-
-If you are unfamiliar with MoveIt, it is recommended to start with this to explore planning with MoveIt in RViz. This contains neither a real-world nor a simulated arm but just a model loaded within RViz for visualisation.
-
-The robot description, moveit interface and RViz will all be loaded in the single demo launch file
+### 1. 실제 로봇 제어
 
 ```bash
-ros2 launch annin_ar4_moveit_config demo.launch.py
-```
-
----
-
-### Control real-world arm with MoveIt in RViz
-
-Start the `annin_ar4_driver` module, which will load configs and the robot description:
-
-```bash
+# 드라이버 실행 (캘리브레이션 포함)
 ros2 launch annin_ar4_driver driver.launch.py calibrate:=True
-```
 
-Available Launch Arguments:
-
-- `ar_model`: The model of the AR4. Options are `mk1`, `mk2`, or `mk3`. Defaults to `mk3`.
-- `calibrate`: Whether to calibrate the robot arm (determine the absolute position
-  of each joint).
-- `include_gripper`: Whether to include the servo gripper. Defaults to: `include_gripper:=True`.
-- `serial_port`: Serial port of the Teensy board. Defaults to: `serial_port:=/dev/ttyACM0`.
-- `arduino_serial_port`: Serial port of the Arduino Nano board. Defaults to `arduino_serial_port:=/dev/ttyUSB0`.
-
-⚠️📏 Note: Calibration is required after flashing firmware to the Teensy board, and
-power cycling the robot and/or the Teensy board. It can be skipped in subsequent
-runs with `calibrate:=False`.
-
-Start MoveIt and RViz:
-
-```bash
+# MoveIt 실행
 ros2 launch annin_ar4_moveit_config moveit.launch.py
 ```
 
-Available Launch Arguments:
-
-- `ar_model`: The model of the AR4. Options are `mk1`, `mk2`, or `mk3`. Defaults to `mk3`.
-- `include_gripper`: Whether to include the servo gripper. Defaults to:
-  `include_gripper:=True`.
-- `use_sim_time`: Make Moveit use simulation time. Should only be enabled when
-  running with Gazebo. Defaults to: `use_sim_time:=False`.
-
-You can now plan in RViz and control the real-world arm. Joint commands and joint states will be updated through the hardware interface.
-
-NOTE: At any point you may interrupt the robot movement by pressing the E-Stop button
-on the robot. This would abruptly stop the robot motion! To reset the E-Stop state of
-the robot use the following command
+### 2. Unity 연동
 
 ```bash
-ros2 run annin_ar4_driver reset_estop.sh <AR_MODEL>
+# Unity 브릿지 실행
+ros2 launch annin_ar4_driver unity_bridge.launch.py
+
+# Unity 제어 모드
+ros2 launch annin_ar4_moveit_config unity_control.launch.py
 ```
 
-where `<AR_MODEL>` is the model of the AR4, one of `mk1`, `mk2`, or `mk3`
-
----
-
-### Control simulated arm in Gazebo with MoveIt in RViz
-
-Start the `annin_ar4_gazebo` module, which will start the Gazebo simulator and load the robot description.
+### 3. Gazebo 시뮬레이션
 
 ```bash
+# Gazebo 실행
 ros2 launch annin_ar4_gazebo gazebo.launch.py
+
+# MoveIt 실행
+ros2 launch annin_ar4_moveit_config moveit.launch.py use_sim_time:=true
 ```
 
-Start Moveit and RViz:
+### 4. HRI 실험
 
 ```bash
-ros2 launch annin_ar4_moveit_config moveit.launch.py use_sim_time:=true include_gripper:=True
+# HRI 실험 컨트롤러
+ros2 run annin_ar4_driver hri_experiment_controller.py
+
+# EEG 녹화
+ros2 run annin_ar4_driver eeg_recorder.py
+
+# VR 텔레옵
+ros2 run annin_ar4_driver vr_teleop.py
 ```
 
-You can now plan in RViz and control the simulated arm.
+## Launch 파라미터
 
-## Tuning and Tweaks
+### driver.launch.py
 
-### Tuning Joint Offsets
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `ar_model` | `mk3` | AR4 모델 (mk1/mk2/mk3) |
+| `calibrate` | `False` | 캘리브레이션 실행 여부 |
+| `include_gripper` | `True` | 그리퍼 포함 여부 |
+| `serial_port` | `/dev/ttyACM0` | Teensy 시리얼 포트 |
+| `arduino_serial_port` | `/dev/ttyUSB0` | Arduino 시리얼 포트 |
 
-If for some reason your robot's joint positions appear misaligned after moving
-to the home position, you can adjust the joint offsets in the
-[joint_offsets/](./annin_ar4_driver/config/joint_offsets/) config folder.
-Select and modify the YAML file corresponding to your AR model to fine-tune the joint positions.
+### unity_bridge.launch.py
 
-### Switching to Position Control
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `ROS_IP` | `0.0.0.0` | ROS TCP 서버 IP |
+| `ROS_TCP_PORT` | `10000` | ROS TCP 포트 |
 
-By default this repo uses velocity-based joint trajectory control. It allows the arm to move a lot faster and the arm movement is also a lot smoother. If for any
-reason you'd like to use the simpler classic position-only control mode, you can
-set `velocity_control_enabled: false` in [driver.yaml](./annin_ar4_driver/config/driver.yaml). Note that you'll need to reduce velocity and acceleration scaling in order for larger motions to succeed.
+## 참고
 
-### Gripper Overcurrent Protection
+- 원본 저장소: [ycheng517/ar4_ros_driver](https://github.com/ycheng517/ar4_ros_driver)
+- Annin Robotics: [https://www.anninrobotics.com](https://www.anninrobotics.com)
+- ROS-TCP-Endpoint: [Unity-Technologies/ROS-TCP-Endpoint](https://github.com/Unity-Technologies/ROS-TCP-Endpoint)
 
-See the [Gripper Overcurrent Protection](./docs/gripper_overcurrent_protection.md) page.
+## License
+
+Apache License 2.0
