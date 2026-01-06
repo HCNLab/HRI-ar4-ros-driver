@@ -81,4 +81,3 @@ bld/
 # NUNIT
 *.VisualState.xml
 TestResult.xml
-ROS-TCP-Endpoint/
