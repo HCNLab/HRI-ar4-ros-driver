@@ -3,6 +3,11 @@ build/
 install/
 log/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # imported ROS projects
 easy_handeye2/
 ros2_aruco/
@@ -76,3 +81,4 @@ bld/
 # NUNIT
 *.VisualState.xml
 TestResult.xml
+ROS-TCP-Endpoint/

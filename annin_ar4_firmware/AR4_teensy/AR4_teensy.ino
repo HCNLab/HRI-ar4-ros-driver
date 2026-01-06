@@ -113,6 +113,28 @@ void resetEstop() {
   estop_pressed = false;
 }
 
+// Called when E-Stop button is released (twisted to unlock)
+void estopReleased() {
+  // Check 3 times to avoid false positives due to electrical noise
+  for (int i = 0; i < 3; i++) {
+    delayMicroseconds(100);
+    if (digitalRead(ESTOP_PIN) != HIGH) {
+      return;  // Still pressed
+    }
+  }
+  // Auto-reset when button is released
+  resetEstop();
+}
+
+// Handler for CHANGE interrupt - detects both press and release
+void estopHandler() {
+  if (digitalRead(ESTOP_PIN) == LOW) {
+    estopPressed();  // Button pressed (FALLING edge)
+  } else {
+    estopReleased(); // Button released (RISING edge)
+  }
+}
+
 bool safeRun(AccelStepper& stepperJoint) {
   if (estop_pressed) return false;
   return stepperJoint.run();
@@ -154,7 +176,8 @@ void setup() {
   }
 
   pinMode(ESTOP_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(ESTOP_PIN), estopPressed, FALLING);
+  // Use CHANGE to detect both press (FALLING) and release (RISING)
+  attachInterrupt(digitalPinToInterrupt(ESTOP_PIN), estopHandler, CHANGE);
 
   Serial.begin(115200);
 }
