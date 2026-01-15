@@ -165,7 +165,7 @@ class PickAndPlace(Node):
         self.get_logger().info('[6/9] Lifting object...')
         lift_pose = [pick_pose[0], pick_pose[1] - 0.3, pick_pose[2] + 0.3, 0.0, 0.0, 0.0]  # pick 위로
         self.move_arm(lift_pose, 2.0)
-        time.sleep(self.physics_settle_delay)
+        time.sleep(self.physics_settle_delay)  
 
         # 7. Transit to Place Location (위에서 접근)
         self.get_logger().info('[7/9] Approaching place location from above...')
