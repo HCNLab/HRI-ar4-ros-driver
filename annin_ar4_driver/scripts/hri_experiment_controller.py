@@ -20,6 +20,13 @@ import time
 import threading
 import sys
 import random
+import os
+
+try:
+    from pylsl import StreamInfo as LSLStreamInfo, StreamOutlet as LSLStreamOutlet
+    HAS_PYLSL = True
+except ImportError:
+    HAS_PYLSL = False
 
 
 class HRIExperimentController(Node):
@@ -48,13 +55,14 @@ class HRIExperimentController(Node):
             'press_air_offset': [0.0, 0.01, 0.01, 0.0, 0.0, 0.0],  # Shallow press (Air)
         }
         
-        # Timing settings
+        # Timing settings (optimized for high trial count paradigm)
         self.timing = {
-            'move_to_position': 2,
-            'press_down': 0.4,
-            'hold': 0.2,
-            'press_up': 0.4,
-            'return_home': 2,
+            'move_home_to_target': 1.0,
+            'move_target_to_target': 0.8,
+            'press_down': 0.3,
+            'hold': 0.4,
+            'press_up': 0.3,
+            'move_target_to_home': 1.0,
         }
         
         if simulation_mode:
@@ -74,7 +82,34 @@ class HRIExperimentController(Node):
             if not self.gripper_client.wait_for_server(timeout_sec=10.0):
                 self.get_logger().warn("Gripper action server not available!")
         
+        # Optional direct LSL outlet (diagnostic only; Unity visual-onset stream is authoritative).
+        self.enable_direct_lsl_markers = os.environ.get(
+            "HRI_ENABLE_PYTHON_LSL", "0"
+        ).strip().lower() in ("1", "true", "yes", "on")
+
+        self.lsl_outlet = None
+        if self.enable_direct_lsl_markers and HAS_PYLSL:
+            try:
+                info = LSLStreamInfo('PythonMarkers', 'Markers', 1, 0, 'int32', 'PythonMarkers_001')
+                self.lsl_outlet = LSLStreamOutlet(info)
+                self.get_logger().info("Diagnostic direct LSL outlet enabled: PythonMarkers")
+            except Exception as e:
+                self.get_logger().warn(f"Direct LSL outlet failed: {e}. Continuing with pending markers only.")
+        elif self.enable_direct_lsl_markers:
+            self.get_logger().warn("HRI_ENABLE_PYTHON_LSL=1 but pylsl is missing. Continuing with pending markers only.")
+        else:
+            self.get_logger().info("Python direct LSL markers disabled (default). Set HRI_ENABLE_PYTHON_LSL=1 to enable diagnostic stream.")
+
+        # Sequence counter for cross-process timing joins (Python -> Unity)
+        self.marker_seq = 0
+        self.marker_seq_lock = threading.Lock()
+
         self.get_logger().info("HRI Experiment Controller Ready!")
+
+    def next_marker_seq(self):
+        with self.marker_seq_lock:
+            self.marker_seq += 1
+            return self.marker_seq
 
     def command_callback(self, msg):
         command = msg.data.strip().upper()
@@ -104,12 +139,13 @@ class HRIExperimentController(Node):
             elif command == "PRESS_ABORT":
                 self.execute_press_sequence(mode="ABORT")
             elif command == "GO_HOME":
-                self.move_to_position('home', self.timing['return_home'])
+                duration = self.timing['move_target_to_home']
+                self.get_logger().info(f"GO_HOME: returning to home [{duration:.2f}s]")
+                self.move_to_position('home', duration)
+                self.publish_status("COMPLETE")
             else:
                 self.get_logger().warn(f"Unknown command: {command}")
                 return
-            
-            self.publish_status("COMPLETE")
             
         except Exception as e:
             self.get_logger().error(f"Error: {e}")
@@ -123,14 +159,12 @@ class HRIExperimentController(Node):
         MARKER_TRIAL_START = 1
         MARKER_ROBOT_PRESS_CYL = 21
         MARKER_ROBOT_PRESS_CUBE = 22
-        MARKER_ROBOT_COMPLETE = 23
         MARKER_ROBOT_PRESS_WRONG = 121
         MARKER_ROBOT_PRESS_MISS = 122
         MARKER_ROBOT_PRESS_AIR = 124   # New: Air press
         MARKER_ROBOT_PRESS_FREEZE = 125 # New: Freeze
         MARKER_ROBOT_PRESS_DOUBLE = 126 # New: Double tap
         MARKER_ROBOT_PRESS_ABORT = 127  # New: Abort
-        MARKER_ROBOT_COMPLETE_ERR = 123
         
         # Define sequence based on mode
         if mode == "CORRECT" or mode == "AIR" or mode == "FREEZE" or mode == "DOUBLE" or mode == "ABORT":
@@ -161,7 +195,15 @@ class HRIExperimentController(Node):
             
         for idx, target in enumerate(sequence):
             step_num = idx + 1
-            self.get_logger().info(f"Step {step_num}: Moving to {target}")
+            if idx == 0:
+                move_segment = "home_to_target"
+                duration = self.timing['move_home_to_target']
+            else:
+                move_segment = "target_to_target"
+                duration = self.timing['move_target_to_target']
+            self.get_logger().info(
+                f"Step {step_num}: Moving to {target} [{move_segment}, {duration:.2f}s]"
+            )
             
             # FREEZE ERROR logic: Pause mid-movement
             if mode == "FREEZE" and idx == error_step_idx:
@@ -170,7 +212,6 @@ class HRIExperimentController(Node):
                 time.sleep(1.5) 
             
             # 1. Move to position
-            duration = self.timing['move_to_position']
             self.move_to_position(target, duration)
             time.sleep(duration)  # Wait for movement
 
@@ -178,7 +219,7 @@ class HRIExperimentController(Node):
             if mode == "ABORT" and idx == error_step_idx:
                 self.get_logger().info("Applying ABORT (Mission Abandon)...")
                 time.sleep(1.0) # Hesitate then abort
-                self.publish_eeg_marker(str(MARKER_ROBOT_PRESS_ABORT))
+                self.send_marker(MARKER_ROBOT_PRESS_ABORT)
                 continue # Skip press, go to next target or home
             
             # 2. Press down
@@ -201,25 +242,26 @@ class HRIExperimentController(Node):
                 for i in range(6)
             ]
             
-            # Marker logic - SEND BEFORE press starts for accurate ERP timing
-            marker_to_send = ""
+            # Marker logic:
+            # Send marker immediately before each press segment.
             if mode == "CORRECT":
-                marker_to_send = str(MARKER_ROBOT_PRESS_CYL) if target == 'cylinder' else str(MARKER_ROBOT_PRESS_CUBE)
+                marker_code = MARKER_ROBOT_PRESS_CYL if target == 'cylinder' else MARKER_ROBOT_PRESS_CUBE
             elif mode == "MISS" and idx == error_step_idx:
-                marker_to_send = str(MARKER_ROBOT_PRESS_MISS)
+                marker_code = MARKER_ROBOT_PRESS_MISS
             elif mode == "AIR" and idx == error_step_idx:
-                marker_to_send = str(MARKER_ROBOT_PRESS_AIR)
+                marker_code = MARKER_ROBOT_PRESS_AIR
             elif mode == "FREEZE" and idx == error_step_idx:
-                marker_to_send = str(MARKER_ROBOT_PRESS_FREEZE)
+                marker_code = MARKER_ROBOT_PRESS_FREEZE
             elif mode == "DOUBLE" and idx == error_step_idx:
-                marker_to_send = str(MARKER_ROBOT_PRESS_DOUBLE)
-            elif mode == "WRONG":
-                marker_to_send = str(MARKER_ROBOT_PRESS_WRONG)
+                marker_code = MARKER_ROBOT_PRESS_DOUBLE
+            elif mode == "WRONG" and idx == 0:
+                # Error marker only on first press (wrong order detection point)
+                marker_code = MARKER_ROBOT_PRESS_WRONG
             else:
                 # Normal press for other steps of error trials
-                marker_to_send = str(MARKER_ROBOT_PRESS_CYL) if target == 'cylinder' else str(MARKER_ROBOT_PRESS_CUBE)
+                marker_code = MARKER_ROBOT_PRESS_CYL if target == 'cylinder' else MARKER_ROBOT_PRESS_CUBE
 
-            self.publish_eeg_marker(marker_to_send)
+            self.send_marker(marker_code)
             
             # Press down (after marker sent)
             duration = self.timing['press_down']
@@ -244,16 +286,17 @@ class HRIExperimentController(Node):
                 self.move_to_position(target, duration/2)
                 time.sleep(0.1)
         
-        # 5. Return home
-        self.get_logger().info("Returning to home...")
-        self.move_to_position('home', self.timing['return_home'])
-        
-        # Marker: Robot Complete
-        if mode == "CORRECT":
-            self.publish_eeg_marker(str(MARKER_ROBOT_COMPLETE))
-        else:
-            self.publish_eeg_marker(str(MARKER_ROBOT_COMPLETE_ERR))
-        
+        # Publish status BEFORE return-to-home so Unity can emit COMPLETE marker
+        # and start post-action observation from the same event.
+        self.publish_status("COMPLETE")
+        self.get_logger().info("COMPLETE sent, returning home (overlapping with post-action)...")
+
+        # 5. Return home (overlaps with Unity post-action observation period)
+        home_duration = self.timing['move_target_to_home']
+        self.get_logger().info(f"Return segment: target_to_home [{home_duration:.2f}s]")
+        self.move_to_position('home', home_duration)
+        time.sleep(home_duration)
+
         self.get_logger().info("Sequence complete")
 
     def move_to_position(self, position_name, duration=3.0):
@@ -297,6 +340,31 @@ class HRIExperimentController(Node):
         msg.data = status
         self.status_pub.publish(msg)
         self.get_logger().info(f"Status: {status}")
+
+    OVTK_OFFSET = 33024
+
+    def send_marker(self, code):
+        """Publish a marker payload for Unity immediate relay.
+        Optional diagnostic direct-LSL mirror is controlled by HRI_ENABLE_PYTHON_LSL=1."""
+        seq = self.next_marker_seq()
+        py_mono_ns = time.perf_counter_ns()
+        py_wall_ns = time.time_ns()
+
+        path = "relay"
+        if self.lsl_outlet is not None:
+            try:
+                self.lsl_outlet.push_sample([self.OVTK_OFFSET + code])
+                path = "relay_direct"
+                self.get_logger().info(f">>> LSL Direct (diagnostic): S{code} (OVTK: {self.OVTK_OFFSET + code})")
+            except Exception as e:
+                path = "relay_direct_failed"
+                self.get_logger().warn(f"Direct LSL send failed for S{code}: {e}")
+
+        payload = (
+            f"{code}|seq={seq}|py_mono_ns={py_mono_ns}|"
+            f"py_wall_ns={py_wall_ns}|path={path}"
+        )
+        self.publish_eeg_marker(payload)
 
     def publish_eeg_marker(self, marker):
         msg = String()
