@@ -20,13 +20,6 @@ import time
 import threading
 import sys
 import random
-import os
-
-try:
-    from pylsl import StreamInfo as LSLStreamInfo, StreamOutlet as LSLStreamOutlet
-    HAS_PYLSL = True
-except ImportError:
-    HAS_PYLSL = False
 
 
 class HRIExperimentController(Node):
@@ -82,23 +75,7 @@ class HRIExperimentController(Node):
             if not self.gripper_client.wait_for_server(timeout_sec=10.0):
                 self.get_logger().warn("Gripper action server not available!")
         
-        # Optional direct LSL outlet (diagnostic only; Unity visual-onset stream is authoritative).
-        self.enable_direct_lsl_markers = os.environ.get(
-            "HRI_ENABLE_PYTHON_LSL", "0"
-        ).strip().lower() in ("1", "true", "yes", "on")
-
-        self.lsl_outlet = None
-        if self.enable_direct_lsl_markers and HAS_PYLSL:
-            try:
-                info = LSLStreamInfo('PythonMarkers', 'Markers', 1, 0, 'int32', 'PythonMarkers_001')
-                self.lsl_outlet = LSLStreamOutlet(info)
-                self.get_logger().info("Diagnostic direct LSL outlet enabled: PythonMarkers")
-            except Exception as e:
-                self.get_logger().warn(f"Direct LSL outlet failed: {e}. Continuing with pending markers only.")
-        elif self.enable_direct_lsl_markers:
-            self.get_logger().warn("HRI_ENABLE_PYTHON_LSL=1 but pylsl is missing. Continuing with pending markers only.")
-        else:
-            self.get_logger().info("Python direct LSL markers disabled (default). Set HRI_ENABLE_PYTHON_LSL=1 to enable diagnostic stream.")
+        self.get_logger().info("Python markers use ROS relay only. Unity LSL relay is authoritative.")
 
         # Sequence counter for cross-process timing joins (Python -> Unity)
         self.marker_seq = 0
@@ -341,25 +318,13 @@ class HRIExperimentController(Node):
         self.status_pub.publish(msg)
         self.get_logger().info(f"Status: {status}")
 
-    OVTK_OFFSET = 33024
-
     def send_marker(self, code):
-        """Publish a marker payload for Unity immediate relay.
-        Optional diagnostic direct-LSL mirror is controlled by HRI_ENABLE_PYTHON_LSL=1."""
+        """Publish a marker payload for Unity immediate relay only."""
         seq = self.next_marker_seq()
         py_mono_ns = time.perf_counter_ns()
         py_wall_ns = time.time_ns()
 
         path = "relay"
-        if self.lsl_outlet is not None:
-            try:
-                self.lsl_outlet.push_sample([self.OVTK_OFFSET + code])
-                path = "relay_direct"
-                self.get_logger().info(f">>> LSL Direct (diagnostic): S{code} (OVTK: {self.OVTK_OFFSET + code})")
-            except Exception as e:
-                path = "relay_direct_failed"
-                self.get_logger().warn(f"Direct LSL send failed for S{code}: {e}")
-
         payload = (
             f"{code}|seq={seq}|py_mono_ns={py_mono_ns}|"
             f"py_wall_ns={py_wall_ns}|path={path}"
