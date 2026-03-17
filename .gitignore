@@ -7,6 +7,8 @@ log/
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+lsl_api.cfg
 
 # imported ROS projects
 easy_handeye2/
