@@ -16,6 +16,7 @@ from std_msgs.msg import String
 from control_msgs.action import FollowJointTrajectory, GripperCommand
 from trajectory_msgs.msg import JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from annin_ar4_driver.srv import ExecuteRobotCommand
 import time
 import threading
 import sys
@@ -27,9 +28,14 @@ class HRIExperimentController(Node):
         super().__init__('hri_experiment_controller')
         
         self.simulation_mode = simulation_mode
+        self.command_lock = threading.Lock()
+        self.command_busy = False
+        self.active_command = ""
+        self.active_command_id = ""
         
         # ROS2 Subscriptions
         self.create_subscription(String, '/unity/robot_command', self.command_callback, 10)
+        self.create_service(ExecuteRobotCommand, '/unity/execute_robot_command', self.command_service_callback)
         
         # ROS2 Publishers
         self.status_pub = self.create_publisher(String, '/unity/robot_status', 10)
@@ -91,9 +97,55 @@ class HRIExperimentController(Node):
     def command_callback(self, msg):
         command = msg.data.strip().upper()
         self.get_logger().info(f"Received command: {command}")
-        
-        thread = threading.Thread(target=self.execute_command, args=(command,))
+        accepted, reason = self.try_start_command(command, command_id="", source="topic")
+        if not accepted:
+            self.get_logger().warn(f"Topic command ignored: {command} ({reason})")
+
+    def command_service_callback(self, request, response):
+        command = request.command.strip().upper()
+        command_id = request.command_id.strip()
+        accepted, reason = self.try_start_command(command, command_id=command_id, source="service")
+
+        response.accepted = accepted
+        response.command_id = command_id
+        response.message = reason
+
+        if accepted:
+            self.get_logger().info(
+                f"Service accepted command_id={command_id}, trial={request.trial_number}, command={command}"
+            )
+        else:
+            self.get_logger().warn(
+                f"Service rejected command_id={command_id}, trial={request.trial_number}, command={command}: {reason}"
+            )
+
+        return response
+
+    def try_start_command(self, command, command_id="", source=""):
+        with self.command_lock:
+            if self.command_busy:
+                return False, f"busy:{self.active_command or 'unknown'}"
+
+            self.command_busy = True
+            self.active_command = command
+            self.active_command_id = command_id
+
+        thread = threading.Thread(
+            target=self.execute_command_threadsafe,
+            args=(command, source),
+            daemon=True
+        )
         thread.start()
+        return True, "accepted"
+
+    def execute_command_threadsafe(self, full_command, source):
+        try:
+            self.execute_command(full_command)
+        finally:
+            with self.command_lock:
+                self.command_busy = False
+                self.active_command = ""
+                self.active_command_id = ""
 
     def execute_command(self, full_command):
         try:
